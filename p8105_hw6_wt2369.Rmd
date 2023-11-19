@@ -10,3 +10,139 @@ library(tidyverse)
 library(modelr)
 ```
 
+## Problem 1:
+
+__Data Import:__
+
+```{r}
+homicide =
+  read_csv("./data/homicide-data.csv") |>
+  mutate(
+    city_state = paste(city, state, sep = ", "),
+    resolved = as.numeric(disposition == "Closed by arrest")
+  ) |>
+  filter(
+    !city_state %in% c("Dallas, TX", "Phoenix, AZ", "Kansas City, MO", "Tulsa, AL"),
+    victim_race %in% c("White", "Black")
+  ) |>
+  mutate(victim_age = as.numeric(victim_age)) |>
+  drop_na(victim_age) |>
+  select(resolved, victim_age, victim_race, victim_sex, city_state)
+  
+```
+
+__GLM:__
+
+```{r}
+baltimore = homicide |>
+  filter(city_state == "Baltimore, MD")
+
+baltimore_glm = 
+  baltimore |>
+  glm(resolved ~ victim_age + victim_race + victim_sex, data = _, family = binomial())
+
+
+# Confidence interval??
+
+baltimore_glm |>
+  broom::tidy() |> 
+  mutate(OR = exp(estimate)) |>
+  select(term, log_OR = estimate, OR, p.value) |> 
+  knitr::kable(digits = 3)
+
+baltimore |>
+  add_predictions(baltimore_glm) |>
+  mutate(prob = boot::inv.logit(pred))
+```
+
+## Problem 2:
+
+__Data Import:__
+
+```{r}
+weather_df = 
+  rnoaa::meteo_pull_monitors(
+    c("USW00094728"),
+    var = c("PRCP", "TMIN", "TMAX"), 
+    date_min = "2022-01-01",
+    date_max = "2022-12-31") |>
+  mutate(
+    name = recode(id, USW00094728 = "CentralPark_NY"),
+    tmin = tmin / 10,
+    tmax = tmax / 10) |>
+  select(name, id, everything())
+```
+
+__Bootstrapping:__
+
+```{r}
+bootstraps =
+  weather_df |>
+  bootstrap(5000) 
+
+# r2:
+r2 =
+  bootstraps |>
+  mutate(
+    models = map(strap, \(df) lm(tmax ~ tmin + prcp, data = df) ),
+    results = map(models, broom::glance)) |> 
+  select(-strap, -models) |> 
+  unnest(results)
+
+# log beta:
+
+log_beta =
+  bootstraps |>
+  mutate(
+    models = map(strap, \(df) lm(tmax ~ tmin + prcp, data = df) ),
+    results = map(models, broom::tidy)) |> 
+  select(-strap, -models) |> 
+  unnest(results)
+```
+
+__Plot:__
+
+```{r}
+# Note: negative log transformation?
+
+# intercept: beta0, tmin: beta1, prcp: beta3
+log_beta |>
+  pivot_wider(names_from = term, values_from = estimate) |>
+  group_by(.id) |>
+  mutate(intercept = `(Intercept)`) |>
+  fill(intercept, tmin, prcp, .direction = 'up') |>
+  fill(intercept, tmin, .direction = 'down') |>
+  summarize(log_beta = log(intercept * tmin)) |>
+  distinct() |>
+  ggplot(aes(x = log_beta)) +
+  geom_density() +
+  labs(title = "Log Beta")
+
+r2 |>
+  ggplot(aes(x = r.squared)) +
+  geom_density() +
+  labs(title = "r squared")
+```
+
+For both the r squared and log(beta0 * beta1) estimates, a normal distribution was seen. The log beta distribution is centered around 2.10, whereas the r2 distribution is centered around 0.91, which indicates a strong correlation between predictor and outcome. One thing to note is that the product of beta 1 and beta 2 are often negative and cannot be log transformed, so I guess the question meant to ask log(beta0 * beta1), which is positive. 
+
+__Quantile:__
+
+```{r}
+# Quantile for r2:
+quantile(r2$r.squared, probs = c(0.025, 0.975))
+
+# Quantile for log beta:
+logbeta_clean = 
+  log_beta |>
+  pivot_wider(names_from = term, values_from = estimate) |>
+  group_by(.id) |>
+  mutate(intercept = `(Intercept)`) |>
+  fill(intercept, tmin, prcp, .direction = 'up') |>
+  fill(intercept, tmin, .direction = 'down') |>
+  summarize(log_beta = log(intercept * tmin)) |>
+  distinct()
+
+quantile(logbeta_clean$log_beta, probs = c(0.025, 0.975))
+```
+
