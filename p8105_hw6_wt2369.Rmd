@@ -1,0 +1,12 @@
+---
+title: "Homework 6"
+author: "Wenxin Tian"
+date: "`r Sys.Date()`"
+output: github_document
+---
+
+```{r}
+library(tidyverse)
+library(modelr)
+```
+
